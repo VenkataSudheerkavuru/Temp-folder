@@ -1,15 +1,15 @@
 <!-- Button to Open the Modal -->
-<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#formModal">
-  Open Form Modal
+<button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#simpleFormModal">
+  Open Modal
 </button>
 
 <!-- Modal Structure -->
-<div class="modal fade" id="formModal" tabindex="-1" aria-labelledby="formModalLabel" aria-hidden="true">
+<div class="modal fade" id="simpleFormModal" tabindex="-1" aria-labelledby="modalLabel" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
       <!-- Modal Header -->
       <div class="modal-header">
-        <h5 class="modal-title" id="formModalLabel">Fill Out the Form</h5>
+        <h5 class="modal-title" id="modalLabel">Simple Form Modal</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
 
@@ -20,12 +20,6 @@
           <div class="mb-3">
             <label for="name" class="form-label">Name</label>
             <input type="text" id="name" class="form-control" formControlName="name" />
-          </div>
-
-          <!-- Email Field -->
-          <div class="mb-3">
-            <label for="email" class="form-label">Email</label>
-            <input type="email" id="email" class="form-control" formControlName="email" />
           </div>
         </form>
       </div>
