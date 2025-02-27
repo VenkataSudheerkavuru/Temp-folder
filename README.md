@@ -1,26 +1,24 @@
-<div *ngIf="selectedContact" class="card mt-3 shadow-sm" style="width: 24rem;">
-  <div class="card-body">
-    <h5 class="card-title">{{ selectedContact.name }}</h5>
-    <p class="card-text">
-      <strong>Email:</strong> {{ selectedContact.email }}<br>
-      <strong>Mobile:</strong> {{ selectedContact.mobile }}<br>
-      <span *ngIf="selectedContact.landline">
-        <strong>Landline:</strong> {{ selectedContact.landline }}<br>
-      </span>
-      <span *ngIf="selectedContact.website">
-        <strong>Website:</strong>
-        <a [href]="selectedContact.website" target="_blank">{{ selectedContact.website }}</a><br>
-      </span>
-      <strong>Address:</strong><br>
-      {{ selectedContact.address }}
-    </p>
-    <div class="d-flex justify-content-end">
-      <button class="btn btn-primary btn-sm me-2" (click)="editContact(selectedContact)">
-        Edit
-      </button>
-      <button class="btn btn-danger btn-sm" (click)="deleteContact(selectedContact)">
-        Delete
-      </button>
+<div class="d-flex flex-column justify-content-start">
+  <!-- Contact Details -->
+  <div>
+    <div class="d-flex justify-content-between">
+      <div class="text-start">
+        <h5 style="font-weight: 400; font-size: 25px;">{{ selectedContact.name }}</h5>
+      </div>
+      <div>
+        <button class="btn btn-link" (click)="editContact(selectedContact)">Edit</button>
+        <button class="btn btn-link" (click)="deleteContact(selectedContact)">Delete</button>
+      </div>
+    </div>
+    <div class="text-start">
+      <p>Email: {{ selectedContact.email }}</p>
+      <p>Mobile: {{ selectedContact.mobile }}</p>
+      <p>Landline: {{ selectedContact.landLine }}</p>
+      <p>
+        Website: 
+        <a [href]="selectedContact.website" target="_blank">{{ selectedContact.website }}</a>
+      </p>
+      <p>Address: {{ selectedContact.address }}</p>
     </div>
   </div>
 </div>
