@@ -1,37 +1,76 @@
-import { Component, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
+checkForMaxOT(fromTime,toTime,optionalOTfromTime,optionalOTtoTime){
+    this.getIsWeekOfforHolidayOT();
 
-@Component({
-  selector: 'app-contact-form',
-  templateUrl: './contact-form.component.html',
-  styleUrls: ['./contact-form.component.css']
-})
-export class ContactFormComponent implements OnInit {
-  contactForm: FormGroup;
+    let calculatedNextDayTotalOt = null;
 
-  constructor(private fb: FormBuilder, public activeModal: NgbActiveModal) {}
+    if(!this.maxOTTime) return false;
 
-  ngOnInit(): void {
-    // Initialize the form with default values
-    this.contactForm = this.fb.group({
-      name: ['', [Validators.required, Validators.minLength(3)]],
-      phone: ['', [Validators.required, Validators.pattern(/^\d{10}$/)]]
-    });
-  }
+    let totalOTRange = this.calculateTotalOTRange(fromTime, toTime, optionalOTfromTime, optionalOTtoTime);
 
-  // Save the contact
-  saveContact(): void {
-    if (this.contactForm.valid) {
-      console.log(this.contactForm.value); // Send this data to your service
-      this.activeModal.close(this.contactForm.value); // Pass data to parent component
-    } else {
-      this.contactForm.markAllAsTouched(); // Highlight errors
+    // if (this.daytypOfWeek == "Holiday" || this.daytypOfWeek == "WeekOff"){
+    //   totalOTRange=this.deductBreakTime(totalOTRange,this.breakTime);
+    // }
+    let totalNextDayBreak;
+    if(this.shouldDeductBreakForWoffAndHoliday){
+      const totalBreakTimeWithinShift = this.calculateShiftBreakDuration();
+      const totalCurrentDayBreak = this.getCurrentDayBreakWithinShift();
+      totalNextDayBreak = this.calculateNextDayBreakDuration(totalCurrentDayBreak,totalBreakTimeWithinShift);
+      totalOTRange = this.getRange(totalCurrentDayBreak,totalOTRange);
     }
+
+    if(this.isSPlitRequired) {
+      totalOTRange = this.getUpdatedTotalOtRange(totalOTRange);
+      calculatedNextDayTotalOt =  this.getUpdatedNextDayTotalOt();
+      calculatedNextDayTotalOt  = this.getRange(totalNextDayBreak, totalOTRange);
+    }else if(this.totalBreakTime && this.totalBreakTime.value){
+      totalOTRange =this.getRange(this.totalBreakTime.value,totalOTRange)
+    }
+
+    totalOTRange = this.roundOffGivenOtTime(totalOTRange);
+    return this.validateMaxOtTime(calculatedNextDayTotalOt,totalOTRange);
   }
 
-  // Close the modal without saving
-  close(): void {
-    this.activeModal.dismiss();
+  private calculateNextDayBreakDuration(currentDayBreak: string, totalBreakDuration: string): string {
+    if (this.isSPlitRequired) {
+      const totalBreakSeconds = this.convertHhMmSsToSeconds(totalBreakDuration);
+      const currentDayBreakSeconds = this.convertHhMmSsToSeconds(currentDayBreak);
+      const nextDayBreakSeconds = totalBreakSeconds - currentDayBreakSeconds;
+      return this.convertSecondsToHhMmSsFormat(nextDayBreakSeconds);
+    }
+    return "00:00:00";
   }
-}
+  private calculateShiftBreakDuration(): string {
+    const breakInterval = DateUtil.calculateIntersectionTime(
+      this.shiftBreakOutTime.value,
+      this.shiftBreakInTime.value,
+      this.fromTime.value,
+      this.toTime.value
+    );
+    return this.calculationOfOvertime(breakInterval[0], breakInterval[1]);
+  }
+
+  private getCurrentDayBreakWithinShift(): string {
+
+    let interSectionTimeInterval: [String, String] | null = DateUtil.calculateIntersectionTime(this.shiftBreakOutTime.value,
+      this.shiftBreakInTime.value, this.fromTime.value, this.toTime.value);
+
+    const breakStart = DateUtil.convertTimeToSeconds(interSectionTimeInterval[0].toString());
+    const breakEnd = DateUtil.convertTimeToSeconds(interSectionTimeInterval[1].toString());
+    const shiftStartTime = DateUtil.convertTimeToSeconds(this.shiftBreakInTime.value);
+
+    let breakTimeInSeconds = this.calculationOfOvertime(interSectionTimeInterval[0], interSectionTimeInterval[1]);
+    let totalCurrentDayBreak;
+
+    if (interSectionTimeInterval) {
+      if (this.isSPlitRequired) {
+        if (breakStart > breakEnd) {
+          totalCurrentDayBreak = breakEnd
+        } else if (breakStart < shiftStartTime && breakEnd < shiftStartTime) {
+          totalCurrentDayBreak = breakEnd - breakStart
+        }
+      } else {
+        totalCurrentDayBreak = breakTimeInSeconds;
+      }
+    }
+    return totalCurrentDayBreak;
+  }
