@@ -1,122 +1,172 @@
-1. Method: calculateFixedWH
+/*
+        Break Type - Actual
+     */
+    Map<String, List<PunchRequest>> categorizedPunchesMap_Actual = categorizePunches(punchList,
+        BreakType.ACTUAL);
+    List<PunchRequest> inPunches_Actual = categorizedPunchesMap_Actual.get("IN");
+    List<PunchRequest> outPunches_Actual = categorizedPunchesMap_Actual.get("OUT");
 
-Purpose
+    List<ProcessData> processData = new ArrayList<ProcessData>();
 
-To calculate the total work hours for a given day using the employee’s first punch and last punch, while considering permissions.
+    if (inPunches_Actual.size() > 0 && outPunches_Actual.size() > 0) {
+      if (inPunches_Actual.get(0).getLocalPunchTime()
+          .isAfter(outPunches_Actual.get(0).getLocalPunchTime())) {
+        outPunches_Actual.remove(0);
+      }
+    }
 
-Pseudocode
+    if (inPunches_Actual.size() >= 1) {
+      determineWorkLocation(workHourDetails, inPunches_Actual.get(0));
+    } else if (outPunches_Actual.size() == 1) {
+      determineWorkLocation(workHourDetails, outPunches_Actual.get(0));
+    }
 
-FUNCTION calculateFixedWH(workHourPolicy, currentDayShift, currentDate,
-                          workHourDetails, firstPunch, lastPunch, shiftProcessingContextModel):
+    // -----------------------------
 
-    totalFWH = getFixedWorkHours(firstPunch, lastPunch, currentDate, workHourPolicy)
-
-    IF totalFWH > 0:
-        workHourDetails.totalWorkHours = totalFWH
-        workHourDetails.totalWorkHoursFormatted = convertSecondsToHHMMSS(totalFWH)
-    ELSE:
-        workHourDetails.totalWorkHours = 0
-        workHourDetails.totalWorkHoursFormatted = "00:00:00"
-
-    RETURN workHourDetails
-
-Explanation
-
-Delegates actual duration calculation to getFixedWorkHours.
-
-Stores final work hours (raw seconds + formatted).
-
-Ensures no negative totals.
+    AffiliateDetails affiliateDetails = organizationRestClient
+        .getAffiliateDetails(workHourPolicy.getAffiliateId());
 
 
+    if (affiliateDetails.isInOutReport() && (!inPunches_Actual.isEmpty() && !outPunches_Actual.isEmpty())) {
 
----
+      try {
+        LOGGER.info("DELETING RECORD");
+        processDataRepository.deleteByEmployeeAccountNoAndProcessDate(inPunches_Actual.get(0).getEmployeeAccountNo(),
+            DateUtil.convertLocalDateTimeToDate(currentDate, TimeZone.getDefault()));
+        LOGGER.info("DELETING RECORD SUCCESSFUL");
+      }
+      catch (Exception e){
+        throw new BusinessException(WHC01, ExceptionMessages.INTERNAL_SERVER_ERROR);
+      }
 
-2. Method: getFixedWorkHours
+      for (int i = 0; i <= inPunches_Actual.size() - 1; i++) {
+        ProcessData processData1 = new ProcessData();
+        // Preparing process_data
 
-Purpose
-
-Computes base work hours from first and last punch, and adjusts it by adding approved permission hours.
-
-Formula
-
-Base Duration = (Last Punch Time − First Punch Time)
-Total Work Hours = Base Duration + Credited Permission Hours
-
-Pseudocode
-
-FUNCTION getFixedWorkHours(firstPunch, lastPunch, currentDate, workHourPolicy):
-
-    inTime  = firstPunch.time
-    outTime = lastPunch.time
-
-    baseDuration = (outTime - inTime) in seconds
-
-    totalFWH = baseDuration
-
-    totalFWH = getFixedPermissionHours(currentDate, totalFWH, firstPunch, lastPunch)
-
-    RETURN totalFWH
-
-Explanation
-
-Calculates raw duration between first and last punch.
-
-Calls getFixedPermissionHours to add permission-based credits.
+        processData1.setEmployeeAccountNo(inPunches_Actual.get(0).getEmployeeAccountNo());
+        processData1.setOrganizationId(inPunches_Actual.get(0).getOrganizationId());
+        processData1.setAffiliateId(inPunches_Actual.get(0).getAffiliateId());
+        processData1.setProcessDate(DateUtil
+            .convertLocalDateTimeToDate(currentDate, TimeZone.getDefault()));
+        processData1.setEmployeeName(inPunches_Actual.get(0).getEmployeeName());
 
 
 
----
 
-3. Method: getFixedPermissionHours
+        for (int j = 0; j <= outPunches_Actual.size() - 1; j++) {
+          if (i == j) {
+            processData1.setInPunch(inPunches_Actual.get(i).getLocalPunchTime());
+            processData1.setOutPunch(outPunches_Actual.get(j).getLocalPunchTime());
+            processData1.setInRemark(inPunches_Actual.get(i).getRemarks());
+            processData1.setOutRemark(inPunches_Actual.get(j).getRemarks());
+            // Calculating work hours between two punches
+            if (i == 0) {
+              String Wh = calculateWhOrBh(inPunches_Actual.get(i).getLocalPunchTime(),
+                  outPunches_Actual.get(j).getLocalPunchTime());
+              processData1.setWorkHours(Wh);
+                if(inPunches_Actual.get(i).getLocation() != null) {
+                 processData1.setWorkLocation(Worklocation(inPunches_Actual.get(i).getLocation().getName()));
+                }
+            } else {
+              String Wh = calculateWhOrBh(inPunches_Actual.get(i).getLocalPunchTime(),
+                  outPunches_Actual.get(j).getLocalPunchTime());
 
-Purpose
+              //workHourDetails.setBreakInTime(outPunches_Actual.get(j - 1).getLocalPunchTime().toString());
+              //workHourDetails.setBreakOutTime(inPunches_Actual.get(i).getLocalPunchTime().toString());
 
-To credit approved permission hours into total work hours, so that excused time counts as attendance.
+              workHourDetails.setBreakInTime(DateUtil
+                  .formatDate(outPunches_Actual.get(j - 1).getLocalPunchTime(),
+                      DateUtil.TIMEFORMAT_Hmm));
 
-Key Policy Flag
+              workHourDetails.setBreakOutTime(DateUtil
+                  .formatDate(inPunches_Actual.get(i).getLocalPunchTime(),
+                      DateUtil.TIMEFORMAT_Hmm));
 
-permissionDetails.isAddHoursToTheAttendance
+              String Bh = calculateWhOrBh(outPunches_Actual.get(j - 1).getLocalPunchTime(),
+                  inPunches_Actual.get(i).getLocalPunchTime());
+              processData1.setWorkHours(Wh);
+              processData1.setBreakHours(Bh);
+                if(inPunches_Actual.get(i).getLocation() != null) {
+                 processData1.setWorkLocation(Worklocation(inPunches_Actual.get(i).getLocation().getName()));
+                }
+            }
+          } else if (i > outPunches_Actual.size() - 1) {
+            processData1.setInPunch(inPunches_Actual.get(i).getLocalPunchTime());
+            String Bh = calculateWhOrBh(outPunches_Actual.get(j).getLocalPunchTime(),
+                inPunches_Actual.get(i).getLocalPunchTime());
 
-Only permissions with this flag set to true are credited.
+            workHourDetails.setBreakInTime(DateUtil
+                .formatDate(outPunches_Actual.get(j).getLocalPunchTime(), DateUtil.TIMEFORMAT_Hmm));
+            workHourDetails.setBreakOutTime(DateUtil
+                .formatDate(inPunches_Actual.get(i).getLocalPunchTime(), DateUtil.TIMEFORMAT_Hmm));
 
-HR policy controls which permission types add hours.
+            processData1.setBreakHours(Bh);
+            if(inPunches_Actual.get(i).getLocation() != null) {
+              processData1.setWorkLocation(Worklocation(inPunches_Actual.get(i).getLocation().getName()));
+            }
+          }
+        }
+        processData.add(processData1);
+      }
+      processData.forEach(processDataRecords1 -> {
+        try {
+          ProcessDataRecords punchArrangeData = mapper
+              .map(processDataRecords1, ProcessDataRecords.class);
+          processDataRepository.save(punchArrangeData); // save emp_bg_process_data
+        } catch (Exception e) {
+          throw new BusinessException(WHC01, ExceptionMessages.INTERNAL_SERVER_ERROR);
+        }
+      });
+    }
+
+    //------------------------------------------------------
+
+    if (inPunches_Actual.size() > 0 && outPunches_Actual.size() > 0) {
+      PunchRequest firstPunch = inPunches_Actual.get(0);
+      PunchRequest lastPunch = outPunches_Actual.get(outPunches_Actual.size() - 1);
+      /*
+       * Calculate Actual Work Hours
+       **/
+      long totalWHSeconds = getActualWorkHours(inPunches_Actual, outPunches_Actual);
+
+      //calculate Permission Hours
+
+      totalWHSeconds = getTotalPermission(inPunches_Actual, outPunches_Actual,
+          firstPunch.getEmployeeAccountNo(), currentDate, workHourPolicy, totalWHSeconds);
+
+      workHourDetails.setActualWorkHours(DateUtil.convertSecondsToHhMmSsFormat(totalWHSeconds));
+
+      if (BreakType.ACTUAL.toString()
+          .equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
+
+        /*
+       * Calculate Actual break Hours
+       **/
+        SearchRequest searchRequestToGetPermissions = new SearchRequest();
+        searchRequestToGetPermissions.getSearchMap().put(SearchKey.ACCOUNT_NO, firstPunch.getEmployeeAccountNo().toString());
+        searchRequestToGetPermissions.getSearchMap().put(SearchKey.STATUS, TransactionStatus.APPROVED.toString());
+        searchRequestToGetPermissions.getSearchMap().put(SearchKey.START_DATE,
+            DateUtil.formatDate(currentDate, DateUtil.DATEFORMAT_yyyyMMdd));
+        searchRequestToGetPermissions.getSearchMap()
+            .put(SearchKey.AFFILIATE_ID, workHourPolicy.getAffiliateId().toString());
+        searchRequestToGetPermissions.getSearchMap()
+            .put(SearchKey.ORGANIZATION_ID, workHourPolicy.getOrganizationId().toString());
 
 
-Pseudocode
+        long totalBHSeconds = getActualBreakWorkHours(inPunches_Actual, outPunches_Actual, searchRequestToGetPermissions);
+        workHourDetails.setTotalBreakHour(DateUtil.convertSecondsToHhMmSsFormat(totalBHSeconds));
 
-FUNCTION getFixedPermissionHours(currentDate, totalFWR, firstPunch, lastPunch):
-
-    permissions = searchApprovedPermissions(employeeId, currentDate)
-
-    FOR each permission IN permissions:
-
-        IF permission.isAddHoursToTheAttendance:
-
-            permFrom = permission.start
-            permTo   = permission.end
-
-            // Case 1: First Punch inside permission
-            IF firstPunch > permFrom AND firstPunch < permTo:
-                credit = firstPunch - permFrom
-                totalFWR = totalFWR + credit
-
-            // Case 2: First Punch after permission ended
-            ELSE IF firstPunch > permFrom:
-                credit = permission.differenceHours
-                totalFWR = totalFWR + credit
-
-            // Case 3: Last Punch inside permission
-            IF lastPunch > permFrom AND lastPunch < permTo:
-                credit = permTo - lastPunch
-                totalFWR = totalFWR + credit
-
-            // Case 4: Last Punch before permission starts
-            ELSE IF lastPunch <= permFrom:
-                credit = permission.differenceHours
-                totalFWR = totalFWR + credit
-
-    RETURN totalFWR
-
-
----
+        workHourDetails = calculateInPunchOutPunch(currentDayShift, workHourDetails, firstPunch,
+            lastPunch, currentDate,workHourPolicy,shiftProcessingContextModel);
+        workHourDetails.setWorkhoursBasedOnBreakType(workHourDetails.getActualWorkHours());
+        calculateWHBeforeAfterShift(workHourPolicy, currentDayShift, currentDate, workHourDetails,
+            firstPunch, lastPunch);
+      }
+    } else if (inPunches_Actual.size() >= 1 && BreakType.ACTUAL.toString()
+        .equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
+      setInPunchTime(currentDayShift, workHourDetails, inPunches_Actual.get(0), currentDate,workHourPolicy,shiftProcessingContextModel);
+    } else if (outPunches_Actual.size() >= 1 && BreakType.ACTUAL.toString()
+        .equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
+      setOutPunchTime(currentDayShift, workHourDetails,
+          outPunches_Actual.get(outPunches_Actual.size() - 1), currentDate,workHourPolicy,shiftProcessingContextModel);
+    }
