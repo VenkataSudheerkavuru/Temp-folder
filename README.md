@@ -1,54 +1,122 @@
-private long getFixedPermissionHours(LocalDateTime currentDate,
-      long totalFWR, PunchRequest firstPunch, PunchRequest lastPunch){
+1. Method: calculateFixedWH
 
-    SearchRequest searchRequestToGetPermissions = new SearchRequest();
-    searchRequestToGetPermissions.getSearchMap().put(SearchKey.ACCOUNT_NO, firstPunch.getEmployeeAccountNo().toString());
-    searchRequestToGetPermissions.getSearchMap().put(SearchKey.STATUS, TransactionStatus.APPROVED.toString());
-    searchRequestToGetPermissions.getSearchMap().put(SearchKey.START_DATE,
-        DateUtil.formatDate(currentDate, DateUtil.DATEFORMAT_yyyyMMdd));
-    searchRequestToGetPermissions.getSearchMap()
-        .put(SearchKey.AFFILIATE_ID, firstPunch.getAffiliateId().toString());
-    searchRequestToGetPermissions.getSearchMap()
-        .put(SearchKey.ORGANIZATION_ID, firstPunch.getOrganizationId().toString());
+Purpose
 
-          PermissionDetailsList permissionDetailsList = permissionRestClient.searchPermission(searchRequestToGetPermissions);
+To calculate the total work hours for a given day using the employee’s first punch and last punch, while considering permissions.
 
-          if (permissionDetailsList.getTotalCount() != null
-              && permissionDetailsList.getTotalCount() > 0) {
-            for (int i = 0; i < permissionDetailsList.getTotalCount(); i++) {
-              PermissionDetails permissionDetails = permissionDetailsList.getPermissionDetails().get(i);
+Pseudocode
 
-              if(permissionDetails.isAddHoursToTheAttendance()){
+FUNCTION calculateFixedWH(workHourPolicy, currentDayShift, currentDate,
+                          workHourDetails, firstPunch, lastPunch, shiftProcessingContextModel):
 
-              LocalTime permissionFromTime = LocalTime
-                  .parse(permissionDetails.getFromTime(), DateTimeFormatter.ofPattern("H:mm"));
-              LocalDateTime permissionFromDateTime = currentDate.toLocalDate().atTime(permissionFromTime);
-              LocalTime permissionToTime = LocalTime
-                  .parse(permissionDetails.getToTime(), DateTimeFormatter.ofPattern("H:mm"));
-              LocalDateTime permissionToDateTime = currentDate.toLocalDate().atTime(permissionToTime);
-              if (firstPunch.getLocalPunchTime().compareTo(permissionFromDateTime) > 0
-                  && firstPunch.getLocalPunchTime().compareTo(permissionToDateTime) < 0) {
-                long totalPT = DateUtil.convertHhMmSsToSeconds(firstPunch.getLocalPunchTime().
-                    format(DateTimeFormatter.ofPattern("H:mm:ss"))) - DateUtil
-                    .convertHhMmSsToSeconds(permissionDetails.getFromTime() + ":00");
-                totalFWR = totalFWR + totalPT;
-              } else if (firstPunch.getLocalPunchTime().compareTo(permissionFromDateTime) > 0) {
-                totalFWR = totalFWR + DateUtil.convertHhMmSsToSeconds(permissionDetails.getDifferenceHours());
-              }
+    totalFWH = getFixedWorkHours(firstPunch, lastPunch, currentDate, workHourPolicy)
 
-              if (lastPunch.getLocalPunchTime().compareTo(permissionFromDateTime) > 0
-                  && lastPunch.getLocalPunchTime().compareTo(permissionToDateTime) < 0) {
-                long totalPT = DateUtil.convertHhMmSsToSeconds(permissionDetails.getToTime() + ":00") -
-                    DateUtil.convertHhMmSsToSeconds(lastPunch.getLocalPunchTime().
-                    format(DateTimeFormatter.ofPattern("H:mm:ss")));
-                totalFWR = totalFWR + totalPT;
-              } else if (lastPunch.getLocalPunchTime().compareTo(permissionFromDateTime) <= 0) {
-                totalFWR = totalFWR + DateUtil.convertHhMmSsToSeconds(permissionDetails.getDifferenceHours());
-              }
+    IF totalFWH > 0:
+        workHourDetails.totalWorkHours = totalFWH
+        workHourDetails.totalWorkHoursFormatted = convertSecondsToHHMMSS(totalFWH)
+    ELSE:
+        workHourDetails.totalWorkHours = 0
+        workHourDetails.totalWorkHoursFormatted = "00:00:00"
 
-             }
+    RETURN workHourDetails
 
-            }
-          }
-    return totalFWR;
-  }
+Explanation
+
+Delegates actual duration calculation to getFixedWorkHours.
+
+Stores final work hours (raw seconds + formatted).
+
+Ensures no negative totals.
+
+
+
+---
+
+2. Method: getFixedWorkHours
+
+Purpose
+
+Computes base work hours from first and last punch, and adjusts it by adding approved permission hours.
+
+Formula
+
+Base Duration = (Last Punch Time − First Punch Time)
+Total Work Hours = Base Duration + Credited Permission Hours
+
+Pseudocode
+
+FUNCTION getFixedWorkHours(firstPunch, lastPunch, currentDate, workHourPolicy):
+
+    inTime  = firstPunch.time
+    outTime = lastPunch.time
+
+    baseDuration = (outTime - inTime) in seconds
+
+    totalFWH = baseDuration
+
+    totalFWH = getFixedPermissionHours(currentDate, totalFWH, firstPunch, lastPunch)
+
+    RETURN totalFWH
+
+Explanation
+
+Calculates raw duration between first and last punch.
+
+Calls getFixedPermissionHours to add permission-based credits.
+
+
+
+---
+
+3. Method: getFixedPermissionHours
+
+Purpose
+
+To credit approved permission hours into total work hours, so that excused time counts as attendance.
+
+Key Policy Flag
+
+permissionDetails.isAddHoursToTheAttendance
+
+Only permissions with this flag set to true are credited.
+
+HR policy controls which permission types add hours.
+
+
+Pseudocode
+
+FUNCTION getFixedPermissionHours(currentDate, totalFWR, firstPunch, lastPunch):
+
+    permissions = searchApprovedPermissions(employeeId, currentDate)
+
+    FOR each permission IN permissions:
+
+        IF permission.isAddHoursToTheAttendance:
+
+            permFrom = permission.start
+            permTo   = permission.end
+
+            // Case 1: First Punch inside permission
+            IF firstPunch > permFrom AND firstPunch < permTo:
+                credit = firstPunch - permFrom
+                totalFWR = totalFWR + credit
+
+            // Case 2: First Punch after permission ended
+            ELSE IF firstPunch > permFrom:
+                credit = permission.differenceHours
+                totalFWR = totalFWR + credit
+
+            // Case 3: Last Punch inside permission
+            IF lastPunch > permFrom AND lastPunch < permTo:
+                credit = permTo - lastPunch
+                totalFWR = totalFWR + credit
+
+            // Case 4: Last Punch before permission starts
+            ELSE IF lastPunch <= permFrom:
+                credit = permission.differenceHours
+                totalFWR = totalFWR + credit
+
+    RETURN totalFWR
+
+
+---
