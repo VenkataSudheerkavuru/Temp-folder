@@ -1,77 +1,79 @@
-private WorkHourDetails calculateEarlyBy(ShiftDetails currentDayShift,
-      WorkHourDetails workHourDetails, PunchRequest lastPunch, LocalDateTime currentDate,PermissionDetailsList permissionDetailsList,WorkHourPolicyDetails workHourPolicy,ShiftProcessingContextModel shiftProcessingContextModel) {
-    GraceTime graceTime = currentDayShift.getGraceTime();
-    ShiftTiming shiftTiming = currentDayShift.getShiftTiming();
-    LocalDateTime outPunchDateTime = lastPunch.getLocalPunchTime();
-    LocalTime shiftEnd = LocalTime
-        .parse(shiftTiming.getEndTime(), DateTimeFormatter.ofPattern("H:mm"));
-    LocalTime shiftStart = LocalTime
-        .parse(shiftTiming.getStartTime(), DateTimeFormatter.ofPattern("H:mm"));
-    LocalTime shiftOutGraceTime = calculateShiftOutGrace(graceTime, shiftEnd);
-    //In case of night shifts(shift ends at 8am, employee leaves early)
-    //if (shiftEnd.isBefore(shiftStart)) {
-    if (shiftEnd.isBefore(shiftStart) && (shiftOutGraceTime.isBefore(shiftEnd) || shiftOutGraceTime.equals(shiftEnd))) {
-      currentDate = currentDate.plusDays(1);
-    }
-    LocalDateTime shiftOutGrace = currentDate.toLocalDate().atTime(shiftOutGraceTime);
-    long earlyBySeconds = 0;
+private WorkHourDetails calculateNormalShiftWH(WorkHourPolicyDetails workHourPolicy, List<PunchRequest> punchList, ShiftDetails currentDayShift, LocalDateTime currentDate, ShiftProcessingContextModel shiftProcessingContextModel) {
+        WorkHourDetails workHourDetails = new WorkHourDetails();
+    /*
+        Break Type - Fixed
+     */
+        Map<String, List<PunchRequest>> categorizedPunchesMap_Fixed = categorizePunches(punchList, BreakType.FIXED);
+        List<PunchRequest> inPunches_Fixed = categorizedPunchesMap_Fixed.get("IN");
+        List<PunchRequest> outPunches_Fixed = categorizedPunchesMap_Fixed.get("OUT");
+        List<PunchRequest> inOutPunches_Fixed = categorizedPunchesMap_Fixed.get("IN_OUT");
+        List<PunchRequest> pl = new ArrayList<>();
+        Map<String, PunchRequest> inOUTPunches = new HashMap<>();
 
-    if (outPunchDateTime.compareTo(shiftOutGrace) < 0) {
-      earlyBySeconds = Math.abs(Duration
-          .between(currentDate.toLocalDate().atTime(shiftEnd), lastPunch.getLocalPunchTime())
-          .toMillis()) / 1000;
+        if (inPunches_Fixed.size() == 1) {
+            determineWorkLocation(workHourDetails, inPunches_Fixed.get(0));
+        } else if (outPunches_Fixed.size() == 1) {
+            determineWorkLocation(workHourDetails, outPunches_Fixed.get(0));
+        } else if (inOutPunches_Fixed.size() == 1) {
+            determineWorkLocation(workHourDetails, inOutPunches_Fixed.get(0));
+        }
 
-    if (permissionDetailsList.getTotalCount() != null && permissionDetailsList.getTotalCount() > 0
-        && earlyBySeconds > 0) {
-      try {
-        for (int i = 0; i < permissionDetailsList.getTotalCount(); i++) {
-          PermissionDetails permissionDetails = permissionDetailsList.getPermissionDetails().get(i);
-          LocalTime permissionFromTime = LocalTime
-              .parse(permissionDetails.getFromTime(), DateTimeFormatter.ofPattern("H:mm"));
-          LocalDateTime permissionFromDateTime = currentDate.toLocalDate().atTime(permissionFromTime);
-          LocalTime permissionToTime = LocalTime
-              .parse(permissionDetails.getToTime(), DateTimeFormatter.ofPattern("H:mm"));
-          LocalDateTime permissionToDateTime = currentDate.toLocalDate().atTime(permissionToTime);
-          if (outPunchDateTime.compareTo(permissionFromDateTime) <= 0) {
-            earlyBySeconds = Math.abs(Duration
-                    .between(currentDate.toLocalDate().atTime(shiftOutGraceTime), lastPunch.getLocalPunchTime())
-                    .toMillis()) / 1000;
-            if (shiftOutGrace.compareTo(permissionToDateTime) >= 0) {
-              LocalTime permissionTime = LocalTime.parse(permissionDetails.getDifferenceHours(),
-                  DateTimeFormatter.ofPattern("H:mm:ss"));
-              String permisionTimeInSeconds = permissionTime.toString();
-              long totalPermissionSeconds = earlyBySeconds - DateUtil.convertHhMmSsToSeconds(permisionTimeInSeconds);
-              if (totalPermissionSeconds >= 0) {
-                earlyBySeconds = totalPermissionSeconds;
-              } else {
-                earlyBySeconds = 0;
-              }
-            } else if (shiftOutGrace.isAfter(permissionFromDateTime)
-                && !shiftOutGrace.isAfter(permissionToDateTime)) {
-              long totalPT = DateUtil.convertHhMmSsToSeconds(
-                  shiftOutGrace.format(DateTimeFormatter.ofPattern("H:mm:ss"))) - DateUtil
-                  .convertHhMmSsToSeconds(permissionFromTime + ":00");
-              earlyBySeconds = earlyBySeconds - totalPT;
+
+        if ((!inPunches_Fixed.isEmpty() && !outPunches_Fixed.isEmpty()) || inOutPunches_Fixed.size() >= 2) {
+          // will get the first and last punch
+            inOUTPunches = determineINandOUTPunch(inPunches_Fixed, outPunches_Fixed, inOutPunches_Fixed);
+            PunchRequest firstPunch, lastPunch;
+            firstPunch = inOUTPunches.get("FIRST_PUNCH");
+            lastPunch = inOUTPunches.get("LAST_PUNCH");
+            if (lastPunch == null) {
+                pl.add(firstPunch);
+                categorizedPunchesMap_Fixed = categorizePunches(pl, BreakType.FIXED);
+                inPunches_Fixed = categorizedPunchesMap_Fixed.get("IN");
+                outPunches_Fixed = categorizedPunchesMap_Fixed.get("OUT");
+                inOutPunches_Fixed = categorizedPunchesMap_Fixed.get("IN_OUT");
             }
-          } else if (outPunchDateTime.isAfter(permissionFromDateTime)
-              && outPunchDateTime.isBefore(permissionToDateTime)) {
-            earlyBySeconds = Math.abs(Duration
-                    .between(currentDate.toLocalDate().atTime(shiftOutGraceTime), lastPunch.getLocalPunchTime())
-                    .toMillis()) / 1000;
-            if (!shiftOutGrace.isBefore(permissionToDateTime)) {
-              long totalPT = DateUtil.convertHhMmSsToSeconds(permissionToTime + ":00") - DateUtil.
-                  convertHhMmSsToSeconds(outPunchDateTime.format(DateTimeFormatter.ofPattern("H:mm:ss")));
-              long totalPermissionSeconds = earlyBySeconds - totalPT;
-              if (totalPermissionSeconds >= 0) {
-                earlyBySeconds = totalPermissionSeconds;
-              } else {
-                earlyBySeconds = 0;
-              }
-            } else if (shiftOutGrace.compareTo(permissionFromDateTime) > 0
-                && shiftOutGrace.compareTo(permissionToDateTime) <= 0) {
-              long totalPT = DateUtil.convertHhMmSsToSeconds(shiftOutGrace.format(DateTimeFormatter.ofPattern("H:mm:ss"))) - DateUtil
-                  .convertHhMmSsToSeconds(outPunchDateTime.format(DateTimeFormatter.ofPattern("H:mm:ss")));
-              earlyBySeconds = earlyBySeconds - totalPT;
+        }
+
+        if ((inPunches_Fixed.size() > 0 && outPunches_Fixed.size() > 0) || inOutPunches_Fixed.size() >= 2) {
+
+      /*Map<String, PunchRequest> inOUTPunches = determineINandOUTPunch(inPunches_Fixed,
+          outPunches_Fixed, inOutPunches_Fixed);*/
+            PunchRequest firstPunch, lastPunch;
+            firstPunch = inOUTPunches.get("FIRST_PUNCH");
+            lastPunch = inOUTPunches.get("LAST_PUNCH");
+            if (lastPunch != null) {
+                workHourDetails = calculateFixedWH(workHourPolicy, currentDayShift, currentDate, workHourDetails, firstPunch, lastPunch, shiftProcessingContextModel);
             }
-          }
+        } else if (inPunches_Fixed.size() >= 1 && BreakType.FIXED.toString().equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
+            if (inOutPunches_Fixed.size() == 1) {
+                PunchRequest in = inPunches_Fixed.get(0);
+                PunchRequest inOut = inOutPunches_Fixed.get(0);
+                PunchRequest firstPunch, lastPunch;
+                if (in.getLocalPunchTime().isBefore(inOut.getLocalPunchTime())) {
+                    firstPunch = in;
+                    lastPunch = inOut;
+                    calculateFixedWH(workHourPolicy, currentDayShift, currentDate, workHourDetails, firstPunch, lastPunch, shiftProcessingContextModel);
+                } else {
+                    firstPunch = inOut;
+                    setInPunchTime(currentDayShift, workHourDetails, firstPunch, currentDate, workHourPolicy, shiftProcessingContextModel);
+                }
+            } else {
+                setInPunchTime(currentDayShift, workHourDetails, inPunches_Fixed.get(0), currentDate, workHourPolicy, shiftProcessingContextModel);
+            }
+        } else if (outPunches_Fixed.size() >= 1 && BreakType.FIXED.toString().equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
+            if (inOutPunches_Fixed.size() == 1) {
+                PunchRequest out = outPunches_Fixed.get(outPunches_Fixed.size() - 1);
+                PunchRequest inOut = inOutPunches_Fixed.get(inOutPunches_Fixed.size() - 1);
+                PunchRequest firstPunch, lastPunch;
+                if (out.getLocalPunchTime().isAfter(inOut.getLocalPunchTime())) {
+                    firstPunch = inOut;
+                    lastPunch = out;
+                    calculateFixedWH(workHourPolicy, currentDayShift, currentDate, workHourDetails, firstPunch, lastPunch, shiftProcessingContextModel);
+                } else {
+                    lastPunch = inOut;
+                    setOutPunchTime(currentDayShift, workHourDetails, lastPunch, currentDate, workHourPolicy, shiftProcessingContextModel);
+                }
+            } else {
+                setOutPunchTime(currentDayShift, workHourDetails, outPunches_Fixed.get(outPunches_Fixed.size() - 1), currentDate, workHourPolicy, shiftProcessingContextModel);
+            }
         }
