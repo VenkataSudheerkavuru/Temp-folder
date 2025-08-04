@@ -1,172 +1,376 @@
-/*
-        Break Type - Actual
-     */
-    Map<String, List<PunchRequest>> categorizedPunchesMap_Actual = categorizePunches(punchList,
-        BreakType.ACTUAL);
-    List<PunchRequest> inPunches_Actual = categorizedPunchesMap_Actual.get("IN");
-    List<PunchRequest> outPunches_Actual = categorizedPunchesMap_Actual.get("OUT");
+private void calculateAdditionalHours(ProcessingRecord processingRecord, WorkHourPolicyDetails workHourPolicy, ShiftDetails currentDayShift, TransactionConfirmation transactionConfirmation, Long fixedBreaktime) {
 
-    List<ProcessData> processData = new ArrayList<ProcessData>();
+        long shiftStart = DateUtil.convertHhMmSsToSeconds(currentDayShift.getShiftTiming().getStartTime());
+        long shiftEnd = DateUtil.convertHhMmSsToSeconds(currentDayShift.getShiftTiming().getEndTime());
+        long shiftDiff = (shiftEnd - shiftStart);
+        transactionConfirmation = getTotalHourlyLeaveDuration(processingRecord.getLeave_Duration(), transactionConfirmation);
 
-    if (inPunches_Actual.size() > 0 && outPunches_Actual.size() > 0) {
-      if (inPunches_Actual.get(0).getLocalPunchTime()
-          .isAfter(outPunches_Actual.get(0).getLocalPunchTime())) {
-        outPunches_Actual.remove(0);
-      }
-    }
+        in.securtime.core.holidaymanagement.api.model.SpecialRequestTypeList specialRequestTypeList = specialRequestTypeRestClient.getSpecialRequestTypes(processingRecord.getAffiliateId());
+        List<SpecialRequestType> specialRequestTypes = specialRequestTypeList.getSpecialRequestTypeList();
+        String attendanceStatusCode = processingRecord.getAttendanceStatusCode();
 
-    if (inPunches_Actual.size() >= 1) {
-      determineWorkLocation(workHourDetails, inPunches_Actual.get(0));
-    } else if (outPunches_Actual.size() == 1) {
-      determineWorkLocation(workHourDetails, outPunches_Actual.get(0));
-    }
+        //Combination
 
-    // -----------------------------
+        List<String> combinations = specialRequestTypes.stream().filter(requestType -> !requestType.getSpecialRequestAbbreviation().equals("LOP")).flatMap(requestType -> specialRequestTypes.stream().filter(otherRequestType -> !otherRequestType.getSpecialRequestAbbreviation().equals("LOP")).map(otherRequestType -> requestType.getSpecialRequestAbbreviation() + otherRequestType.getSpecialRequestAbbreviation())).collect(Collectors.toList());
 
-    AffiliateDetails affiliateDetails = organizationRestClient
-        .getAffiliateDetails(workHourPolicy.getAffiliateId());
+        boolean isValidCombinationSpecialRequestAbbreviation = combinations.stream().anyMatch(modifiedAbbreviation -> attendanceStatusCode.equals(combinations));
 
+// Get all specialRequestAbbreviation
+        boolean specialRequestAbbreviation = specialRequestTypes.stream().map(SpecialRequestType::getSpecialRequestAbbreviation) // Extract the specialRequestAbbreviation
+                .anyMatch(abbreviation -> attendanceStatusCode.contains(abbreviation));
 
-    if (affiliateDetails.isInOutReport() && (!inPunches_Actual.isEmpty() && !outPunches_Actual.isEmpty())) {
+//Get all specialRequestAbbreviation combination of Present
+        List<String> presentAbbreviations = specialRequestTypes.stream().flatMap(requestType -> {
+            String abbreviation = requestType.getSpecialRequestAbbreviation();
+            return List.of("P" + abbreviation, abbreviation + "P", "MS" + abbreviation, abbreviation + "MS", "M" + abbreviation, abbreviation + "M").stream();
+        }).collect(Collectors.toList());
 
-      try {
-        LOGGER.info("DELETING RECORD");
-        processDataRepository.deleteByEmployeeAccountNoAndProcessDate(inPunches_Actual.get(0).getEmployeeAccountNo(),
-            DateUtil.convertLocalDateTimeToDate(currentDate, TimeZone.getDefault()));
-        LOGGER.info("DELETING RECORD SUCCESSFUL");
-      }
-      catch (Exception e){
-        throw new BusinessException(WHC01, ExceptionMessages.INTERNAL_SERVER_ERROR);
-      }
+        boolean isValidPresentSpecialRequestAbbreviation = presentAbbreviations.stream().anyMatch(modifiedAbbreviation -> {
+            return attendanceStatusCode.equals(modifiedAbbreviation);
+        });
 
-      for (int i = 0; i <= inPunches_Actual.size() - 1; i++) {
-        ProcessData processData1 = new ProcessData();
-        // Preparing process_data
-
-        processData1.setEmployeeAccountNo(inPunches_Actual.get(0).getEmployeeAccountNo());
-        processData1.setOrganizationId(inPunches_Actual.get(0).getOrganizationId());
-        processData1.setAffiliateId(inPunches_Actual.get(0).getAffiliateId());
-        processData1.setProcessDate(DateUtil
-            .convertLocalDateTimeToDate(currentDate, TimeZone.getDefault()));
-        processData1.setEmployeeName(inPunches_Actual.get(0).getEmployeeName());
+        List<String> absenceAbbreviations = specialRequestTypes.stream().flatMap(requestType -> {
+            String abbreviation = requestType.getSpecialRequestAbbreviation();
+            return List.of("A" + abbreviation, abbreviation + "A").stream();
+        }).collect(Collectors.toList());
 
 
+        boolean isValidAbsenceSpecialRequestAbbreviation = absenceAbbreviations.stream().anyMatch(modifiedAbbreviation -> {
+            return attendanceStatusCode.equals(modifiedAbbreviation);
+        });
+
+//Get all specialRequestAbbreviation combination of LOP
+        List<String> lOPAbbreviations = specialRequestTypes.stream().flatMap(requestType -> {
+            String abbreviation = requestType.getSpecialRequestAbbreviation();
+            return List.of("LOP" + abbreviation, abbreviation + "LOP").stream();
+        }).collect(Collectors.toList());
 
 
-        for (int j = 0; j <= outPunches_Actual.size() - 1; j++) {
-          if (i == j) {
-            processData1.setInPunch(inPunches_Actual.get(i).getLocalPunchTime());
-            processData1.setOutPunch(outPunches_Actual.get(j).getLocalPunchTime());
-            processData1.setInRemark(inPunches_Actual.get(i).getRemarks());
-            processData1.setOutRemark(inPunches_Actual.get(j).getRemarks());
-            // Calculating work hours between two punches
-            if (i == 0) {
-              String Wh = calculateWhOrBh(inPunches_Actual.get(i).getLocalPunchTime(),
-                  outPunches_Actual.get(j).getLocalPunchTime());
-              processData1.setWorkHours(Wh);
-                if(inPunches_Actual.get(i).getLocation() != null) {
-                 processData1.setWorkLocation(Worklocation(inPunches_Actual.get(i).getLocation().getName()));
+        boolean isValidLOPSpecialRequestAbbreviation = lOPAbbreviations.stream().anyMatch(modifiedAbbreviation -> {
+            return attendanceStatusCode.equals(modifiedAbbreviation);
+        });
+
+        SpecialRequestAbbrCombValidityType specialRequestAbbrCombValidityType = prepareSpecialrequestAbbrTypes(isValidPresentSpecialRequestAbbreviation, specialRequestAbbreviation, isValidCombinationSpecialRequestAbbreviation, isValidAbsenceSpecialRequestAbbreviation, isValidLOPSpecialRequestAbbreviation);
+
+        if (shiftDiff < 0) {
+            shiftDiff = shiftDiff + 86400;
+        }
+
+        if (currentDayShift.getShiftType() == ShiftType.BREAK_SHIFT) {
+
+            long mShiftBreakIN = DateUtil.convertHhMmSsToSeconds(currentDayShift.getShiftTiming().getBreakIn());
+            long mShiftBreakOut = DateUtil.convertHhMmSsToSeconds(currentDayShift.getShiftTiming().getBreakOut());
+
+            long brkDiff = (mShiftBreakIN - mShiftBreakOut);
+            if (brkDiff < 0) {
+                brkDiff = brkDiff + 86400;
+            }
+
+            shiftDiff = ((shiftDiff) - (brkDiff));
+        }
+
+        //setting values for shift hours
+        String breakTimeBasedOnPrecedence = currentDayShift.isNormalShiftWithBreakHours() && processingRecord.getTotalBreakHour() != null ? processingRecord.getTotalBreakHour() : workHourPolicy.getFixedBreakTime();
+        Long fixedBreakTimeBtwBreakOutIn = breakHourCalculationService.getFixedBreakTimeBtwBreakInAndOut(currentDayShift.getShiftTiming(), currentDayShift.isNormalShiftWithBreakHours());
+
+        if (breakTimeBasedOnPrecedence == null) {
+            processingRecord.setShiftHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff)));
+        } else {
+            long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(breakTimeBasedOnPrecedence);
+            processingRecord.setShiftHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+        }
+
+        // setting values for required hours
+        if (processingRecord.getAttendanceStatusCode().matches("WO|H|WOP|HP|LOP|OH") || transactionConfirmation.isLeaveApplied()) {
+            if (transactionConfirmation.isLeaveApplied()) {
+                if (transactionConfirmation.isIsleaveAppliedForFullDay() && transactionConfirmation.isFirstHalfAbsenceHrs() && transactionConfirmation.isFirstAppliedLeaveFlagInADay() && !transactionConfirmation.isSecondAppliedLeaveFlagInADay()) {
+                    LOGGER.info("Inside Full Day MAKING REQUIRED HOURS 0 FOR " + processingRecord.getAccountNo());
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                    } else if (workHourPolicy.getFixedBreakTime() == null) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(shiftDiff));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+                    }
+                }
+
+                if (transactionConfirmation.isIsleaveAppliedForFullDay() && !(transactionConfirmation.isFirstHalfAbsenceHrs()) && transactionConfirmation.isFirstAppliedLeaveFlagInADay() && !transactionConfirmation.isSecondAppliedLeaveFlagInADay()) {
+                    LOGGER.info("Inside Full Day MAKING REQUIRED HOURS 0 FOR " + processingRecord.getAccountNo());
+                    processingRecord.setRequiredHours("00:00:00");
+                } else {
+                    //this applicable to special request and leave combined case - since special request has no impact in required hours calculation.isSpecial request applied falg is true
+                    // leave applied for half day and hourly leave case so isspecial Request applied is passed as false
+                    updateRequiredHoursForPartialLeaveAndSpecialRequestType(processingRecord, workHourPolicy, currentDayShift, transactionConfirmation, shiftDiff, fixedBreakTimeBtwBreakOutIn, transactionConfirmation.isSpecialRequestApplied());
+
+
                 }
             } else {
-              String Wh = calculateWhOrBh(inPunches_Actual.get(i).getLocalPunchTime(),
-                  outPunches_Actual.get(j).getLocalPunchTime());
+                processingRecord.setRequiredHours("00:00:00");
+            }
 
-              //workHourDetails.setBreakInTime(outPunches_Actual.get(j - 1).getLocalPunchTime().toString());
-              //workHourDetails.setBreakOutTime(inPunches_Actual.get(i).getLocalPunchTime().toString());
+        } else if (transactionConfirmation.isSpecialRequestApplied()) {
+            if (transactionConfirmation.isSpecialRequestForFullDay()) {
+                /*processingRecord.setRequiredHours(workHourPolicy.getMinThresholdWorkHourForFullday());*/
+                long fixedBreakTimeInLong = 0L;
 
-              workHourDetails.setBreakInTime(DateUtil
-                  .formatDate(outPunches_Actual.get(j - 1).getLocalPunchTime(),
-                      DateUtil.TIMEFORMAT_Hmm));
 
-              workHourDetails.setBreakOutTime(DateUtil
-                  .formatDate(inPunches_Actual.get(i).getLocalPunchTime(),
-                      DateUtil.TIMEFORMAT_Hmm));
+                if (specialRequestAbbreviation) {
+                    // first precdence should be given to normal shift with  break hours
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                    } else if (workHourPolicy.getFixedBreakTime() == null) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(shiftDiff));
+                    } else {
 
-              String Bh = calculateWhOrBh(outPunches_Actual.get(j - 1).getLocalPunchTime(),
-                  inPunches_Actual.get(i).getLocalPunchTime());
-              processData1.setWorkHours(Wh);
-              processData1.setBreakHours(Bh);
-                if(inPunches_Actual.get(i).getLocation() != null) {
-                 processData1.setWorkLocation(Worklocation(inPunches_Actual.get(i).getLocation().getName()));
+                        if (!CollectionUtils.isEmpty(workHourPolicy.getWorkHourRuleModelList())) {
+                            for (int i = 0; i < workHourPolicy.getWorkHourRuleModelList().size(); i++) {
+                                if (workHourPolicy.getWorkHourRuleModelList().get(i).isEnableBreakType()) {
+                                    List<Long> ids = workHourPolicy.getWorkHourRuleModelList().get(i).getIds();
+                                    List<Long> longStream = ids.stream().filter(item -> item.equals(processingRecord.getShiftId())).collect(Collectors.toList());
+                                    if (longStream != null) {
+                                        fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getWorkHourRuleModelList().get(i).getBreakTime());
+                                    }
+                                } else {
+                                    fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                                }
+                            }
+                        } else {
+                            fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        }
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+
+                    }
+                }
+
+            } else if (transactionConfirmation.getIsHourlySpecialRequest()) {
+                if (currentDayShift.isNormalShiftWithBreakHours()) {
+                    processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                } else if (workHourPolicy.getFixedBreakTime() == null) {
+                    processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(shiftDiff));
+
+                } else {
+                    long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                    fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                    processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+
+                }
+            } else {
+                /*processingRecord.setRequiredHours(workHourPolicy.getMinThresholdWorkHourForHalfday());*/
+                if ((isValidPresentSpecialRequestAbbreviation || isValidCombinationSpecialRequestAbbreviation) || (processingRecord.getAttendanceStatusCode().matches("POD|PFW|PWFH|ODP|FWP|WFHP|ODWFH|WFHOD|ODFW|FWOD|FWWFH|WFHFW|MOD|MFW|MWFH|ODM|FWM|WFHM|MSOD|MSFW|MSWFH|ODMS|FWMS|WFHMS"))) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                    } else if (workHourPolicy.getFixedBreakTime() == null) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff)));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+                    }
+                } else if ((isValidAbsenceSpecialRequestAbbreviation) || (processingRecord.getAttendanceStatusCode().matches("AOD|AFW|AWFH|ODA|FWA|WFHA"))) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                    } else if (workHourPolicy.getFixedBreakTime() == null) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff)));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+                    }
+
+                } else if ((isValidLOPSpecialRequestAbbreviation) || (processingRecord.getAttendanceStatusCode().matches("LOPFW|FWLOP|ALOP|LOPA|LOPOD|ODLOP|LOPWFH|WFHLOP"))) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) - fixedBreakTimeBtwBreakOutIn) / 2));
+                    } else if (workHourPolicy.getFixedBreakTime() == null) {
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) / 2)));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) - fixedBreakTimeInLong) / 2));
+                    }
                 }
             }
-          } else if (i > outPunches_Actual.size() - 1) {
-            processData1.setInPunch(inPunches_Actual.get(i).getLocalPunchTime());
-            String Bh = calculateWhOrBh(outPunches_Actual.get(j).getLocalPunchTime(),
-                inPunches_Actual.get(i).getLocalPunchTime());
+        } else {
+            //processingRecord.setRequiredHours(workHourPolicy.getMinThresholdWorkHourForFullday());
+            if (currentDayShift.isNormalShiftWithBreakHours()) {
+                processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+            } else if (workHourPolicy.getFixedBreakTime() == null) {
+                processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat(shiftDiff));
 
-            workHourDetails.setBreakInTime(DateUtil
-                .formatDate(outPunches_Actual.get(j).getLocalPunchTime(), DateUtil.TIMEFORMAT_Hmm));
-            workHourDetails.setBreakOutTime(DateUtil
-                .formatDate(inPunches_Actual.get(i).getLocalPunchTime(), DateUtil.TIMEFORMAT_Hmm));
+            } else {
+                long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                processingRecord.setRequiredHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
 
-            processData1.setBreakHours(Bh);
-            if(inPunches_Actual.get(i).getLocation() != null) {
-              processData1.setWorkLocation(Worklocation(inPunches_Actual.get(i).getLocation().getName()));
             }
-          }
         }
-        processData.add(processData1);
-      }
-      processData.forEach(processDataRecords1 -> {
-        try {
-          ProcessDataRecords punchArrangeData = mapper
-              .map(processDataRecords1, ProcessDataRecords.class);
-          processDataRepository.save(punchArrangeData); // save emp_bg_process_data
-        } catch (Exception e) {
-          throw new BusinessException(WHC01, ExceptionMessages.INTERNAL_SERVER_ERROR);
+
+        // Binding data for worked hours
+        if (processingRecord.getAttendanceStatusCode().matches("WO|H|LOP|OH") || transactionConfirmation.isLeaveApplied()) {
+            if (transactionConfirmation.isLeaveApplied()) {
+                if (transactionConfirmation.isIsleaveAppliedForFullDay()) {
+                    processingRecord.setWorkedHours("00:00:00");
+                } else {
+                    if (transactionConfirmation.isSpecialRequestApplied()) {
+                        if (transactionConfirmation.isSpecialRequestForFullDay()) {
+                            if (currentDayShift.isNormalShiftWithBreakHours()) {
+                                processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                            } else if (breakTimeBasedOnPrecedence == null) {
+                                processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff)));
+                            } else {
+
+                                long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                                fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                                processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+                            }
+                        }
+                        // handling leave and hourly special request combined
+                        else if (transactionConfirmation.getIsHourlySpecialRequest()) {
+                            //calculate the work hour for hourly special request
+                            updateWorkHourForHrlyAndHalfDaySpecialrequest(processingRecord, workHourPolicy, currentDayShift, transactionConfirmation, breakTimeBasedOnPrecedence, specialRequestAbbrCombValidityType, fixedBreaktime, shiftDiff);
+                        } else {
+                            Long workHr = 0L;
+                            if (processingRecord.getWhBasedOnWHPolicy() != null) {
+                                workHr = DateUtil.convertHhMmSsToSeconds(processingRecord.getWhBasedOnWHPolicy());
+                            }
+                            if (currentDayShift.isNormalShiftWithBreakHours()) {
+                                processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((((shiftDiff) - fixedBreakTimeBtwBreakOutIn) / 2) + workHr));
+                            } else if (breakTimeBasedOnPrecedence == null) {
+                                processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) / 2) + workHr));
+                            } else {
+                                long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                                if (!CollectionUtils.isEmpty(workHourPolicy.getWorkHourRuleModelList())) {
+                                    for (int i = 0; i < workHourPolicy.getWorkHourRuleModelList().size(); i++) {
+                                        if (workHourPolicy.getWorkHourRuleModelList().get(i).isEnableBreakType()) {
+                                            List<Long> ids = workHourPolicy.getWorkHourRuleModelList().get(i).getIds();
+                                            List<Long> longStream = ids.stream().filter(item -> item.equals(processingRecord.getShiftId())).collect(Collectors.toList());
+                                            if (longStream != null) {
+                                                fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getWorkHourRuleModelList().get(i).getBreakTime());
+                                            } else {
+                                                fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(breakTimeBasedOnPrecedence);
+                                            }
+                                        }
+                                    }
+                                }
+                                processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((((shiftDiff) - fixedBreakTimeInLong) / 2) + workHr));
+                            }
+                        }
+                    } else {
+                        // leave applied for half day
+                        if (processingRecord.getAttendanceStatusCode().startsWith("A") || processingRecord.getAttendanceStatusCode().endsWith("A")) {
+                            processingRecord.setWorkedHours("00:00:00");
+                        } else if (processingRecord.getAttendanceStatusCode().startsWith("P") || processingRecord.getAttendanceStatusCode().endsWith("P") || processingRecord.getAttendanceStatusCode().startsWith("M") || processingRecord.getAttendanceStatusCode().endsWith("M") || processingRecord.getAttendanceStatusCode().startsWith("MS") || processingRecord.getAttendanceStatusCode().endsWith("MS")) {
+                            processingRecord.setWorkedHours(processingRecord.getWhBasedOnWHPolicy());
+                        }
+                    }
+                }
+            } else {
+                processingRecord.setWorkedHours("00:00:00");
+            }
+        } else if (transactionConfirmation.isSpecialRequestApplied()) {
+
+            if (transactionConfirmation.isSpecialRequestForFullDay()) {
+                /*processingRecord.setWorkedHours(workHourPolicy.getMinThresholdWorkHourForFullday());*/
+
+                if (specialRequestAbbreviation) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                    } else if (breakTimeBasedOnPrecedence == null) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(shiftDiff));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+                    }
+                }
+
+            }
+            //hourly request
+            else if (transactionConfirmation.getIsHourlySpecialRequest()) {
+
+                updateWorkHourForHrlyAndHalfDaySpecialrequest(processingRecord, workHourPolicy, currentDayShift, transactionConfirmation, breakTimeBasedOnPrecedence, specialRequestAbbrCombValidityType, fixedBreaktime, shiftDiff);
+            } else {
+                /*processingRecord.setWorkedHours(workHourPolicy.getMinThresholdWorkHourForHalfday());*/
+                long workHr = 0;
+                if (processingRecord.getWhBasedOnWHPolicy() != null) {
+                    workHr = DateUtil.convertHhMmSsToSeconds(processingRecord.getWhBasedOnWHPolicy());
+                }
+
+                if ((isValidPresentSpecialRequestAbbreviation) || (processingRecord.getAttendanceStatusCode().matches("POD|PFW|PWFH|ODP|FWP|WFHP|ODWFH|WFHOD|ODFW|FWOD|FWWFH|WFHFW|MOD|MFW|MWFH|ODM|FWM|WFHM|MSOD|MSFW|MSWFH|ODMS|FWMS|WFHMS"))) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((((shiftDiff) - fixedBreakTimeBtwBreakOutIn) / 2) + workHr));
+                    } else if (breakTimeBasedOnPrecedence == null) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((((shiftDiff) / 2) + workHr)));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((((shiftDiff) - fixedBreakTimeInLong) / 2) + workHr));
+                    }
+                } else if (isValidCombinationSpecialRequestAbbreviation) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeBtwBreakOutIn));
+                    } else if (breakTimeBasedOnPrecedence == null) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(shiftDiff));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        if (!CollectionUtils.isEmpty(workHourPolicy.getWorkHourRuleModelList())) {
+                            for (int i = 0; i < workHourPolicy.getWorkHourRuleModelList().size(); i++) {
+                                if (workHourPolicy.getWorkHourRuleModelList().get(i).isEnableBreakType()) {
+                                    List<Long> ids = workHourPolicy.getWorkHourRuleModelList().get(i).getIds();
+                                    List<Long> longStream = ids.stream().filter(item -> item.equals(processingRecord.getShiftId())).collect(Collectors.toList());
+                                    if (longStream != null) {
+                                        fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getWorkHourRuleModelList().get(i).getBreakTime());
+                                    } else {
+                                        fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(breakTimeBasedOnPrecedence);
+                                    }
+                                }
+                            }
+                        }
+                        // long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat((shiftDiff) - fixedBreakTimeInLong));
+                    }
+                } else if ((isValidAbsenceSpecialRequestAbbreviation) || (processingRecord.getAttendanceStatusCode().matches("AOD|AFW|AWFH|ODA|FWA|WFHA"))) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) - fixedBreakTimeBtwBreakOutIn) / 2));
+                    } else if (breakTimeBasedOnPrecedence == null) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) / 2)));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) - fixedBreakTimeInLong) / 2));
+                    }
+                } else if ((isValidLOPSpecialRequestAbbreviation) || (processingRecord.getAttendanceStatusCode().matches("LOPFW|FWLOP|ALOP|LOPA|LOPOD|ODLOP|LOPWFH|WFHLOP"))) {
+                    if (currentDayShift.isNormalShiftWithBreakHours()) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) - fixedBreakTimeBtwBreakOutIn) / 2));
+                    } else if (breakTimeBasedOnPrecedence == null) {
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) / 2)));
+                    } else {
+                        long fixedBreakTimeInLong = DateUtil.convertHhMmSsToSeconds(workHourPolicy.getFixedBreakTime());
+                        fixedBreakTimeInLong = getBreakTimeFromWorkHourRuleModel(processingRecord, workHourPolicy, fixedBreakTimeInLong);
+                        processingRecord.setWorkedHours(DateUtil.convertSecondsToHhMmSsFormat(((shiftDiff) - fixedBreakTimeInLong) / 2));
+                    }
+                }
+            }
+        } else {
+            processingRecord.setWorkedHours(processingRecord.getWhBasedOnWHPolicy());
         }
-      });
-    }
-
-    //------------------------------------------------------
-
-    if (inPunches_Actual.size() > 0 && outPunches_Actual.size() > 0) {
-      PunchRequest firstPunch = inPunches_Actual.get(0);
-      PunchRequest lastPunch = outPunches_Actual.get(outPunches_Actual.size() - 1);
-      /*
-       * Calculate Actual Work Hours
-       **/
-      long totalWHSeconds = getActualWorkHours(inPunches_Actual, outPunches_Actual);
-
-      //calculate Permission Hours
-
-      totalWHSeconds = getTotalPermission(inPunches_Actual, outPunches_Actual,
-          firstPunch.getEmployeeAccountNo(), currentDate, workHourPolicy, totalWHSeconds);
-
-      workHourDetails.setActualWorkHours(DateUtil.convertSecondsToHhMmSsFormat(totalWHSeconds));
-
-      if (BreakType.ACTUAL.toString()
-          .equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
-
-        /*
-       * Calculate Actual break Hours
-       **/
-        SearchRequest searchRequestToGetPermissions = new SearchRequest();
-        searchRequestToGetPermissions.getSearchMap().put(SearchKey.ACCOUNT_NO, firstPunch.getEmployeeAccountNo().toString());
-        searchRequestToGetPermissions.getSearchMap().put(SearchKey.STATUS, TransactionStatus.APPROVED.toString());
-        searchRequestToGetPermissions.getSearchMap().put(SearchKey.START_DATE,
-            DateUtil.formatDate(currentDate, DateUtil.DATEFORMAT_yyyyMMdd));
-        searchRequestToGetPermissions.getSearchMap()
-            .put(SearchKey.AFFILIATE_ID, workHourPolicy.getAffiliateId().toString());
-        searchRequestToGetPermissions.getSearchMap()
-            .put(SearchKey.ORGANIZATION_ID, workHourPolicy.getOrganizationId().toString());
 
 
-        long totalBHSeconds = getActualBreakWorkHours(inPunches_Actual, outPunches_Actual, searchRequestToGetPermissions);
-        workHourDetails.setTotalBreakHour(DateUtil.convertSecondsToHhMmSsFormat(totalBHSeconds));
+        // Binding value for Absence Hours
+        Long requiredHoursInNumberFormat = DateUtil.convertHhMmSsToSeconds(processingRecord.getRequiredHours());
+        Long workedHoursInNumberFormat = DateUtil.convertHhMmSsToSeconds(processingRecord.getWorkedHours());
+        Long sum = requiredHoursInNumberFormat - workedHoursInNumberFormat;
+        if (sum >= 0) {
+            processingRecord.setAbsenceHours(DateUtil.convertSecondsToHhMmSsFormat(sum));
+        } else {
+            processingRecord.setAbsenceHours("00:00:00");
+        }
 
-        workHourDetails = calculateInPunchOutPunch(currentDayShift, workHourDetails, firstPunch,
-            lastPunch, currentDate,workHourPolicy,shiftProcessingContextModel);
-        workHourDetails.setWorkhoursBasedOnBreakType(workHourDetails.getActualWorkHours());
-        calculateWHBeforeAfterShift(workHourPolicy, currentDayShift, currentDate, workHourDetails,
-            firstPunch, lastPunch);
-      }
-    } else if (inPunches_Actual.size() >= 1 && BreakType.ACTUAL.toString()
-        .equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
-      setInPunchTime(currentDayShift, workHourDetails, inPunches_Actual.get(0), currentDate,workHourPolicy,shiftProcessingContextModel);
-    } else if (outPunches_Actual.size() >= 1 && BreakType.ACTUAL.toString()
-        .equalsIgnoreCase(workHourPolicy.getNormalShiftBreakType().toString())) {
-      setOutPunchTime(currentDayShift, workHourDetails,
-          outPunches_Actual.get(outPunches_Actual.size() - 1), currentDate,workHourPolicy,shiftProcessingContextModel);
+        if (transactionConfirmation.isAttendanceExceptionEligibility()) {
+            processingRecord.setRequiredHours(DateUtil.ZERO_HOUR_HHMMSS);
+            processingRecord.setWorkedHours(DateUtil.ZERO_HOUR_HHMMSS);
+            processingRecord.setAbsenceHours(DateUtil.ZERO_HOUR_HHMMSS);
+        }
+
     }
