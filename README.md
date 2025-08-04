@@ -1,25 +1,96 @@
-private void calculateAdditionalHours(ProcessingRecord processingRecord, WorkHourPolicyDetails workHourPolicy, ShiftDetails currentDayShift, TransactionConfirmation transactionConfirmation, Long fixedBreaktime) {
+Step-by-Step Flow (as in code)
 
-        long shiftStart = DateUtil.convertHhMmSsToSeconds(currentDayShift.getShiftTiming().getStartTime());
-        long shiftEnd = DateUtil.convertHhMmSsToSeconds(currentDayShift.getShiftTiming().getEndTime());
-        long shiftDiff = (shiftEnd - shiftStart);
-        transactionConfirmation = getTotalHourlyLeaveDuration(processingRecord.getLeave_Duration(), transactionConfirmation);
+1. Calculate Shift Duration
 
-        in.securtime.core.holidaymanagement.api.model.SpecialRequestTypeList specialRequestTypeList = specialRequestTypeRestClient.getSpecialRequestTypes(processingRecord.getAffiliateId());
-        List<SpecialRequestType> specialRequestTypes = specialRequestTypeList.getSpecialRequestTypeList();
-        String attendanceStatusCode = processingRecord.getAttendanceStatusCode();
+Convert Shift Start and Shift End into seconds.
 
-        //Combination
+Compute shiftDiff = shiftEnd - shiftStart.
 
-        List<String> combinations = specialRequestTypes.stream().filter(requestType -> !requestType.getSpecialRequestAbbreviation().equals("LOP")).flatMap(requestType -> specialRequestTypes.stream().filter(otherRequestType -> !otherRequestType.getSpecialRequestAbbreviation().equals("LOP")).map(otherRequestType -> requestType.getSpecialRequestAbbreviation() + otherRequestType.getSpecialRequestAbbreviation())).collect(Collectors.toList());
+If shiftDiff < 0, add 86400 seconds (to handle overnight shifts).
 
-        boolean isValidCombinationSpecialRequestAbbreviation = combinations.stream().anyMatch(modifiedAbbreviation -> attendanceStatusCode.equals(combinations));
 
-// Get all specialRequestAbbreviation
-        boolean specialRequestAbbreviation = specialRequestTypes.stream().map(SpecialRequestType::getSpecialRequestAbbreviation) // Extract the specialRequestAbbreviation
-                .anyMatch(abbreviation -> attendanceStatusCode.contains(abbreviation));
 
-//Get all specialRequestAbbreviation combination of Present
+2. Handle Break Shift
+
+If shift type is BREAK_SHIFT, calculate break duration (brkDiff = breakIn - breakOut).
+
+If brkDiff < 0, add 86400 to adjust.
+
+Subtract break duration from shiftDiff.
+
+
+
+3. Fetch Special Request Types
+
+Call specialRequestTypeRestClient.getSpecialRequestTypes(affiliateId).
+
+Build lists of abbreviations:
+
+Combination abbreviations (like POD, PFH, etc.)
+
+Present abbreviations (P + type, type + P, MS + type, etc.)
+
+Absence abbreviations (A + type, type + A)
+
+LOP abbreviations (LOP + type, type + LOP)
+
+
+Check if attendanceStatusCode matches any of these lists.
+
+
+
+4. Set Shift Hours
+
+If isNormalShiftWithBreakHours and totalBreakHour available →
+shiftHours = shiftDiff - breakBetweenBreakInAndOut.
+
+Else if fixedBreakTime available →
+shiftHours = shiftDiff - fixedBreakTime.
+
+Else →
+shiftHours = shiftDiff.
+
+Save into processingRecord.setShiftHours.
+
+
+
+5. Set Required Hours
+
+If attendanceStatusCode is one of (WO|H|WOP|HP|LOP|OH) OR leave applied:
+
+If leave applied:
+
+Full Day Leave + 1st Half Absence → RequiredHours = shiftDiff (minus break).
+
+Full Day Leave without 1st Half Absence → RequiredHours = 00:00:00.
+
+Partial Leave or Special Request Combo → Call updateRequiredHoursForPartialLeaveAndSpecialRequestType.
+
+
+Else (Holiday, WO, etc.) → RequiredHours = 00:00:00.
+
+
+Else if Special Request Applied:
+
+Full Day → RequiredHours = shiftDiff (minus break, based on precedence).
+
+Hourly Special Request → RequiredHours = shiftDiff (minus applicable break).
+
+Else:
+
+If Present Code OR Combination Code → RequiredHours = shiftDiff (minus break).
+
+If Absence Code → RequiredHours = shiftDiff (minus break).
+
+If LOP Code → RequiredHours = (shiftDiff - break) / 2.
+
+
+
+Else (no leave/special request):
+
+RequiredHours = shiftDiff (minus applicable break).
+
+
         List<String> presentAbbreviations = specialRequestTypes.stream().flatMap(requestType -> {
             String abbreviation = requestType.getSpecialRequestAbbreviation();
             return List.of("P" + abbreviation, abbreviation + "P", "MS" + abbreviation, abbreviation + "MS", "M" + abbreviation, abbreviation + "M").stream();
