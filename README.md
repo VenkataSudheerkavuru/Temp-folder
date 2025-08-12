@@ -1,29 +1,27 @@
-private BreakPriority getPriorityOfBreak(WorkHourPolicyDetails workHourPolicy, ShiftDetails currentDayShift) {
+private List<GenericPair<LocalDateTime, LocalDateTime>> mergeOverlappingRanges(List<GenericPair<LocalDateTime, LocalDateTime>> combinedRanges) {
+        List<GenericPair<LocalDateTime, LocalDateTime>> mergedRanges = new ArrayList<>();
 
-    if (currentDayShift != null && currentDayShift.isNormalShiftWithBreakHours()) {
-        if (currentDayShift.getShiftTiming() != null
-                && currentDayShift.getShiftTiming().getBreakIn() != null
-                && currentDayShift.getShiftTiming().getBreakOut() != null) {
-            return BreakPriority.NORMAL_SHIFT_WITH_BREAK_HOURS;
+        if (combinedRanges.size() > 1) {
+            LocalDateTime start = null;
+            LocalDateTime end = null;
+
+            for (GenericPair<LocalDateTime, LocalDateTime> range : combinedRanges) {
+                LocalDateTime currentStart = range.getFirst();
+                LocalDateTime currentEnd = range.getSecond();
+
+                if (start == null || currentStart.isBefore(start)) {
+                    start = currentStart;
+                }
+
+                if (end == null || currentEnd.isAfter(end)) {
+                    end = currentEnd;
+                }
+            }
+
+            mergedRanges.add(new GenericPair<>(start, end));
+        } else {
+            mergedRanges.addAll(combinedRanges);
         }
-    }
 
-    if (workHourPolicy != null &&
-            (BreakType.FIXED.equals(workHourPolicy.getNormalShiftBreakType())
-                    || BreakType.FIXED.equals(workHourPolicy.getBreakShiftBreakType()))) {
-        return BreakPriority.FIXED;
+        return mergedRanges;
     }
-
-    if (workHourPolicy != null
-            && workHourPolicy.getFixedBreakTime() != null
-            && workHourPolicy.getMinimumWorkHoursForBreak() != null
-            && Boolean.TRUE.equals(workHourPolicy.getMinimumWorkHoursForBreak().getMinWorkHrsForBrk())) {
-        return BreakPriority.MIN_WORK_HOURS;
-    }
-
-    if (workHourPolicy != null && !CollectionUtils.isEmpty(workHourPolicy.getWorkHourRuleModelList())) {
-        return BreakPriority.RULE_MODEL;
-    }
-
-    return BreakPriority.NONE;
-}
