@@ -1,36 +1,25 @@
-private List<GenericPair<LocalDateTime, LocalDateTime>> mergeOverlappingRanges(
-        List<GenericPair<LocalDateTime, LocalDateTime>> combinedRanges) {
+@Override
+    public void deductBreakRangeIfAnyOverlapping(List<GenericPair<LocalDateTime, LocalDateTime>> permissionRanges, ShiftDetails shiftDetails, LocalDateTime currentDate) {
+        if(shiftDetails.isNormalShiftWithBreakHours()){
 
-    if (combinedRanges == null || combinedRanges.isEmpty()) {
-        return Collections.emptyList();
-    }
+            ShiftTiming shiftTiming = shiftDetails.getShiftTiming();
 
-    // Sort by start time
-    combinedRanges.sort(Comparator.comparing(GenericPair::getFirst));
+            // 1.Extract break timing
+            LocalTime breakInLocalTime = LocalTime.parse(shiftDetails.getShiftTiming().getBreakIn(), DateTimeFormatter.ofPattern(DateUtil.TIMEFORMAT_Hmm));
+            LocalTime breakOutLocalTime = LocalTime.parse(shiftDetails.getShiftTiming().getBreakOut(), DateTimeFormatter.ofPattern(DateUtil.TIMEFORMAT_Hmm));
 
-    List<GenericPair<LocalDateTime, LocalDateTime>> mergedRanges = new ArrayList<>();
+            // 2. Parse shift times
 
-    // Start with the first interval
-    LocalDateTime currentStart = combinedRanges.get(0).getFirst();
-    LocalDateTime currentEnd = combinedRanges.get(0).getSecond();
+            LocalTime shiftStart = LocalTime.parse(shiftTiming.getStartTime(), DateTimeFormatter.ofPattern(DateUtil.TIMEFORMAT_Hmm));
+            LocalTime shiftEnd = LocalTime.parse(shiftTiming.getEndTime(), DateTimeFormatter.ofPattern(DateUtil.TIMEFORMAT_Hmm));
+            LocalDateTime shiftStartDateTime = currentDate.toLocalDate().atTime(shiftStart);
+            LocalDateTime shiftEndDateTime = currentDate.toLocalDate().atTime(shiftEnd);
 
-    for (int i = 1; i < combinedRanges.size(); i++) {
-        LocalDateTime nextStart = combinedRanges.get(i).getFirst();
-        LocalDateTime nextEnd = combinedRanges.get(i).getSecond();
+            if (shiftEndDateTime.isBefore(shiftStartDateTime)) {
+                shiftEndDateTime = shiftEndDateTime.plusDays(1);
+            }
+            
+            
 
-        if (!nextStart.isAfter(currentEnd)) {
-            // Overlaps → extend the current end if needed
-            currentEnd = currentEnd.isAfter(nextEnd) ? currentEnd : nextEnd;
-        } else {
-            // No overlap → save current range and move to next
-            mergedRanges.add(new GenericPair<>(currentStart, currentEnd));
-            currentStart = nextStart;
-            currentEnd = nextEnd;
         }
     }
-
-    // Add the last range
-    mergedRanges.add(new GenericPair<>(currentStart, currentEnd));
-
-    return mergedRanges;
-}
